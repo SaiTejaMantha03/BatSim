@@ -47,20 +47,22 @@ DESIGNS = [
     dict(key="Baseline", label="14S4P NMC, natural air", cell=NMC, Ns=14, Np=4, cooling="air"),
     dict(key="Opt A",    label="14S4P NMC, forced air",  cell=NMC, Ns=14, Np=4, cooling="forced"),
     dict(key="Opt B",    label="16S4P LFP, PCM",         cell=LFP, Ns=16, Np=4, cooling="pcm"),
+    dict(key="Opt C",    label="14S4P NMC, PCM",         cell=NMC, Ns=14, Np=4, cooling="pcm"),
 ]
 
-DEFAULT = dict(r_mult=1.48, h_nat=8.0, h_forced=23.2, expose=0.4)
+DEFAULT = dict(r_mult=1.48, h_nat=8.0, h_forced=23.2, expose=0.4, pcm_factor=2.0)
 
 
 def run(d, p=DEFAULT):
     c = d["cell"]; Ns, Np = d["Ns"], d["Np"]
+    P_LOAD_, T_AMB_ = p.get("load", P_LOAD), p.get("amb", T_AMB)
     n = Ns * Np
     R = c["R_ac"] * p["r_mult"]
     # constant power: P = n * Ic * (Vnom - Ic*R)  -> solve quadratic for Ic
-    a, b, cc = R, -c["Vnom"], P_LOAD / n
+    a, b, cc = R, -c["Vnom"], P_LOAD_ / n
     Ic = (-b - (b * b - 4 * a * cc) ** 0.5) / (2 * a)
     t_end = c["Ah"] * 3600.0 / Ic                    # s, discharge duration
-    E_wh = P_LOAD * t_end / 3600.0                   # delivered energy
+    E_wh = P_LOAD_ * t_end / 3600.0                   # delivered energy
     q_cell = Ic ** 2 * R                             # W per cell
     area = 3.141593 * c["d"] * c["L"] * p["expose"]  # m2 effective
     h = p["h_forced"] if d["cooling"] == "forced" else p["h_nat"]
@@ -68,13 +70,13 @@ def run(d, p=DEFAULT):
     m_cell = c["mass"]
     m_pcm = 0.0
     if d["cooling"] == "pcm":
-        m_pcm = 2.0 * q_cell * t_end / 165e3        # kg per cell
+        m_pcm = p.get("pcm_factor", 2.0) * q_cell * t_end / 165e3   # kg per cell (default: 2x the cell heat)
     # explicit time stepping, enthalpy method for PCM
-    T, dt, peak, t = T_AMB, 1.0, T_AMB, 0.0
+    T, dt, peak, t = T_AMB_, 1.0, T_AMB_, 0.0
     while t < t_end:
         cp_pcm = 2000.0 + (165e3 / 5.0 if 38.0 <= T <= 43.0 else 0.0)
         C = m_cell * c["cp"] + m_pcm * cp_pcm
-        T += (q_cell - hA * (T - T_AMB)) / C * dt
+        T += (q_cell - hA * (T - T_AMB_)) / C * dt
         peak = max(peak, T); t += dt
     cell_mass = n * m_cell
     mass = cell_mass * 1.15 + n * m_pcm
